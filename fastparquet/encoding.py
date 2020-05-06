@@ -6,6 +6,7 @@ from __future__ import print_function
 
 import array
 import numba
+from numba.experimental import jitclass
 import numpy as np
 
 from .speedups import unpack_byte_array
@@ -24,7 +25,7 @@ def unpack_boolean(data, out):
 
 def read_plain_boolean(raw_bytes, count):
     """Read `count` booleans using the plain encoding."""
-    data = np.frombuffer(raw_bytes, dtype='uint8')
+    data = np.frombuffer(raw_bytes, dtype="uint8")
     padded = len(raw_bytes) * 8
     out = np.empty(padded, dtype=bool)
     unpack_boolean(data, out)
@@ -34,7 +35,7 @@ def read_plain_boolean(raw_bytes, count):
 DECODE_TYPEMAP = {
     parquet_thrift.Type.INT32: np.int32,
     parquet_thrift.Type.INT64: np.int64,
-    parquet_thrift.Type.INT96: np.dtype('S12'),
+    parquet_thrift.Type.INT96: np.dtype("S12"),
     parquet_thrift.Type.FLOAT: np.float32,
     parquet_thrift.Type.DOUBLE: np.float64,
 }
@@ -47,17 +48,17 @@ def read_plain(raw_bytes, type_, count, width=0):
     if type_ == parquet_thrift.Type.FIXED_LEN_BYTE_ARRAY:
         if count == 1:
             width = len(raw_bytes)
-        dtype = np.dtype('S%i' % width)
+        dtype = np.dtype("S%i" % width)
         return np.frombuffer(byte_buffer(raw_bytes), dtype=dtype, count=count)
     if type_ == parquet_thrift.Type.BOOLEAN:
         return read_plain_boolean(raw_bytes, count)
     # variable byte arrays (rare)
     try:
-        return np.array(unpack_byte_array(raw_bytes, count), dtype='O')
+        return np.array(unpack_byte_array(raw_bytes, count), dtype="O")
     except RuntimeError:
         if count == 1:
             # e.g., for statistics
-            return np.array([raw_bytes], dtype='O')
+            return np.array([raw_bytes], dtype="O")
         else:
             raise
 
@@ -71,7 +72,7 @@ def read_unsigned_var_int(file_obj):  # pragma: no cover
     shift = 0
     while True:
         byte = file_obj.read_byte()
-        result |= ((byte & 0x7F) << shift)
+        result |= (byte & 0x7F) << shift
         if (byte & 0x80) == 0:
             break
         shift += 7
@@ -89,7 +90,7 @@ def read_rle(file_obj, header, bit_width, o):  # pragma: no cover
     width = (bit_width + 7) // 8
     zero = np.zeros(4, dtype=np.int8)
     data = file_obj.read(width)
-    zero[:len(data)] = data
+    zero[: len(data)] = data
     value = zero.view(np.int32)
     o.write_many(value, count)
 
@@ -139,7 +140,7 @@ def read_bitpacked(file_obj, header, width, o):  # pragma: no cover
             bits_wnd_r += width
         elif current_byte + 1 < byte_count:
             current_byte += 1
-            data |= (raw_bytes[current_byte] << bits_wnd_l)
+            data |= raw_bytes[current_byte] << bits_wnd_l
             bits_wnd_l += 8
 
 
@@ -155,7 +156,7 @@ def read_rle_bit_packed_hybrid(io_obj, width, length=None, o=None):  # pragma: n
     if length is None:
         length = read_length(io_obj)
     start = io_obj.loc
-    while io_obj.loc-start < length and o.loc < o.len:
+    while io_obj.loc - start < length and o.loc < o.len:
         header = read_unsigned_var_int(io_obj)
         if header & 1 == 0:
             read_rle(io_obj, header, width, o)
@@ -172,7 +173,7 @@ def read_length(file_obj):  # pragma: no cover
     Equivalent to struct.unpack('<i'), but suitable for numba-jit
     """
     sub = file_obj.read(4)
-    return sub[0] + sub[1]*256 + sub[2]*256*256 + sub[3]*256*256*256
+    return sub[0] + sub[1] * 256 + sub[2] * 256 * 256 + sub[3] * 256 * 256 * 256
 
 
 class NumpyIO(object):  # pragma: no cover
@@ -181,6 +182,7 @@ class NumpyIO(object):  # pragma: no cover
 
     This class is numba-jit-able (for specific dtypes)
     """
+
     def __init__(self, data):
         self.data = data
         self.len = data.size
@@ -188,16 +190,16 @@ class NumpyIO(object):  # pragma: no cover
 
     def read(self, x):
         self.loc += x
-        return self.data[self.loc-x:self.loc]
+        return self.data[self.loc - x : self.loc]
 
     def read_byte(self):
         self.loc += 1
-        return self.data[self.loc-1]
+        return self.data[self.loc - 1]
 
     def write(self, d):
         l = len(d)
         self.loc += l
-        self.data[self.loc-l:self.loc] = d
+        self.data[self.loc - l : self.loc] = d
 
     def write_byte(self, b):
         if self.loc >= self.len:
@@ -207,7 +209,7 @@ class NumpyIO(object):  # pragma: no cover
         self.loc += 1
 
     def write_many(self, b, count):
-        self.data[self.loc:self.loc+count] = b
+        self.data[self.loc : self.loc + count] = b
         self.loc += count
 
     def tell(self):
@@ -216,12 +218,13 @@ class NumpyIO(object):  # pragma: no cover
     def so_far(self):
         """ In write mode, the data we have gathered until now
         """
-        return self.data[:self.loc]
+        return self.data[: self.loc]
 
-spec8 = [('data', numba.uint8[:]), ('loc', numba.int64), ('len', numba.int64)]
-Numpy8 = numba.jitclass(spec8)(NumpyIO)
-spec32 = [('data', numba.uint32[:]), ('loc', numba.int64), ('len', numba.int64)]
-Numpy32 = numba.jitclass(spec32)(NumpyIO)
+
+spec8 = [("data", numba.uint8[:]), ("loc", numba.int64), ("len", numba.int64)]
+Numpy8 = jitclass(spec8)(NumpyIO)
+spec32 = [("data", numba.uint32[:]), ("loc", numba.int64), ("len", numba.int64)]
+Numpy32 = jitclass(spec32)(NumpyIO)
 
 
 def _assemble_objects(assign, defi, rep, val, dic, d, null, null_val, max_defi, prev_i):
@@ -269,7 +272,7 @@ def _assemble_objects(assign, defi, rep, val, dic, d, null, null_val, max_defi, 
             else:
                 # first time: no row to save yet, unless it's a row continued from previous page
                 if vali > 0:
-                    assign[i - 1].extend(part) # add the items to previous row
+                    assign[i - 1].extend(part)  # add the items to previous row
                     part = []
                     # don't increment i since we only filled i-1
                 started = True
@@ -282,9 +285,9 @@ def _assemble_objects(assign, defi, rep, val, dic, d, null, null_val, max_defi, 
             part.append(None)
         # next object is None as opposed to an object
         have_null = de == 0 and null
-    if started: # normal case - add the leftovers to the next row
+    if started:  # normal case - add the leftovers to the next row
         assign[i] = None if have_null else part
-    else: # can only happen if the only elements in this page are the continuation of the last row from previous page
+    else:  # can only happen if the only elements in this page are the continuation of the last row from previous page
         assign[i - 1].extend(part)
     return i
 
